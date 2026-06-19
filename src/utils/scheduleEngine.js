@@ -323,14 +323,14 @@ export function validateSchedule(year, month, schedule, activeJuniors, seniors, 
           message: `Tanggal ${day} (Weekday): Tidak ada Senior di Shift C!`
         });
       }
-      
-      // Catat total kerja untuk aturan Senin >= Selasa >= ... >= Jumat
-      const weekMon = getWeekIndex(date);
-      if (!weeklyWeekdayCounts[weekMon]) {
-        weeklyWeekdayCounts[weekMon] = {};
-      }
-      weeklyWeekdayCounts[weekMon][dayOfWeek] = totalWorkingStaffThisDay;
     }
+    
+    // Catat total kerja untuk aturan urutan staff dan perbandingan weekend vs Senin
+    const weekMon = getWeekIndex(date);
+    if (!weeklyWeekdayCounts[weekMon]) {
+      weeklyWeekdayCounts[weekMon] = {};
+    }
+    weeklyWeekdayCounts[weekMon][dayOfWeek] = totalWorkingStaffThisDay;
   }
   
   // Aturan 5: Weekday lebih banyak staff daripada weekend (pada rata-rata harian)
@@ -344,10 +344,11 @@ export function validateSchedule(year, month, schedule, activeJuniors, seniors, 
   }
   
   // Aturan Tambahan: Senin >= Selasa >= Rabu >= Kamis >= Jumat (untuk setiap minggu penuh)
+  // Serta aturan: Sabtu <= Senin dan Minggu <= Senin
   Object.keys(weeklyWeekdayCounts).forEach(weekMonStr => {
     const weekData = weeklyWeekdayCounts[weekMonStr];
-    // Check transitions: Mon(1) -> Tue(2) -> Wed(3) -> Thu(4) -> Fri(5)
-    // Hanya periksa jika hari tersebut terdefinisi (bisa saja terpotong awal/akhir bulan)
+    
+    // 1. Check weekdays transition: Mon(1) -> Tue(2) -> Wed(3) -> Thu(4) -> Fri(5)
     const daysPresent = [1, 2, 3, 4, 5].filter(d => weekData[d] !== undefined);
     
     for (let idx = 0; idx < daysPresent.length - 1; idx++) {
@@ -365,6 +366,64 @@ export function validateSchedule(year, month, schedule, activeJuniors, seniors, 
           type: 'daily',
           day: dayForIndex(d2),
           message: `Pelanggaran urutan staff mingguan: Total staff hari ${dayNames[d1]} (${weekData[d1]}) < hari ${dayNames[d2]} (${weekData[d2]}).`
+        });
+      }
+    }
+    
+    // 2. Check weekend vs Monday: Sabtu (6) <= Senin (1) dan Minggu (0) <= Senin (1)
+    let mondayStaff = weekData[1];
+    if (mondayStaff === undefined && prevMonthSchedule && prevMonthSchedule.schedule) {
+      const mondayDate = new Date(Number(weekMonStr));
+      let prevM = month - 1;
+      let prevY = year;
+      if (prevM < 0) {
+        prevM = 11;
+        prevY -= 1;
+      }
+      if (mondayDate.getMonth() === prevM && mondayDate.getFullYear() === prevY) {
+        const prevDay = mondayDate.getDate();
+        
+        let juniorCount = 0;
+        activeJuniors.forEach(junior => {
+          const shift = prevMonthSchedule.schedule[junior.id]?.[prevDay - 1];
+          if (shift === 'A' || shift === 'B' || shift === 'C') {
+            juniorCount++;
+          }
+        });
+        
+        let seniorCount = 0;
+        seniors.forEach(senior => {
+          const shift = prevMonthSchedule.schedule[senior.id]?.[prevDay - 1];
+          if (shift === 'A' || shift === 'B' || shift === 'C') {
+            seniorCount++;
+          }
+        });
+        
+        mondayStaff = juniorCount + seniorCount;
+      }
+    }
+    
+    if (mondayStaff !== undefined) {
+      const weekMonDate = new Date(Number(weekMonStr));
+      const getDayNumForDow = (dow) => {
+        const diff = dow === 0 ? 6 : dow - 1;
+        const d = new Date(weekMonDate.getTime());
+        d.setDate(weekMonDate.getDate() + diff);
+        return d.getDate();
+      };
+
+      if (weekData[6] !== undefined && weekData[6] > mondayStaff) {
+        errors.push({
+          type: 'daily',
+          day: getDayNumForDow(6),
+          message: `Pelanggaran kapasitas hari: Total staff hari Sabtu (${weekData[6]}) lebih banyak dari hari Senin (${mondayStaff}).`
+        });
+      }
+      if (weekData[0] !== undefined && weekData[0] > mondayStaff) {
+        errors.push({
+          type: 'daily',
+          day: getDayNumForDow(0),
+          message: `Pelanggaran kapasitas hari: Total staff hari Minggu (${weekData[0]}) lebih banyak dari hari Senin (${mondayStaff}).`
         });
       }
     }
